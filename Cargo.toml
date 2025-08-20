@@ -1,0 +1,23 @@
+[package]
+name = "wikipedia_core"
+version = "0.0.1"
+edition = "2024"
+description = "Core library for generating StaticMCP files from Wikipedia dumps"
+license = "MIT"
+repository = "https://github.com/StaticMCP/wikipedia_core"
+readme = "README.md"
+keywords = ["wikipedia", "staticmcp", "mcp", "static", "generator"]
+categories = ["command-line-utilities", "web-programming"]
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+quick-xml = "0.31"
+regex = "1.10"
+chrono = { version = "0.4", features = ["serde"] }
+bzip2 = "0.4"
+unicode-normalization = "0.1"
+
+[dev-dependencies]
+tempfile = "3.0"
+tokio-test = "0.4"
