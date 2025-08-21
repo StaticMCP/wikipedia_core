@@ -240,3 +240,282 @@ fn test_wikitext_cleaning() {
     let cleaned = clean_wikitext(input_with_refs);
     assert_eq!(cleaned, "Text with  and .");
 }
+
+#[test]
+fn test_collision_handling_short_articles() -> Result<(), Box<dyn std::error::Error>> {
+    let temp_dir = TempDir::new()?;
+    let input_file = temp_dir.path().join("test.xml");
+    let output_dir = temp_dir.path().join("output");
+
+    let test_xml = r#"<mediawiki>
+  <page>
+    <title>War Article</title>
+    <id>1</id>
+    <revision>
+      <text>Short content about historical war events.</text>
+    </revision>
+  </page>
+  <page>
+    <title>War/Article</title>
+    <id>2</id>
+    <revision>
+      <text>Another short article about war history.</text>
+    </revision>
+  </page>
+</mediawiki>"#;
+
+    fs::write(&input_file, test_xml)?;
+
+    let config = Config::new(input_file, output_dir.clone())
+        .language("en")
+        .topic_filter(TopicFilter::History);
+
+    generate(config, NoCategorizer)?;
+
+    let merged_file = output_dir.join("tools/get_article/war_article.json");
+    assert!(merged_file.exists());
+
+    let merged_content = fs::read_to_string(&merged_file)?;
+    assert!(merged_content.contains("War Article"));
+    assert!(merged_content.contains("War/Article"));
+    assert!(merged_content.contains("---"));
+
+    Ok(())
+}
+
+#[test]
+fn test_collision_handling_long_articles() -> Result<(), Box<dyn std::error::Error>> {
+    let temp_dir = TempDir::new()?;
+    let input_file = temp_dir.path().join("test.xml");
+    let output_dir = temp_dir.path().join("output");
+
+    let long_content1 = format!(
+        "This is a long historical war article about ancient battles. {}",
+        "a".repeat(1400)
+    );
+    let long_content2 = format!(
+        "This is another long war article about medieval conflicts. {}",
+        "b".repeat(1400)
+    );
+
+    let test_xml = format!(
+        r#"<mediawiki>
+  <page>
+    <title>Battle Article</title>
+    <id>1</id>
+    <revision>
+      <text>{long_content1}</text>
+    </revision>
+  </page>
+  <page>
+    <title>Battle/Article</title>
+    <id>2</id>
+    <revision>
+      <text>{long_content2}</text>
+    </revision>
+  </page>
+</mediawiki>"#
+    );
+
+    fs::write(&input_file, test_xml)?;
+
+    let config = Config::new(input_file, output_dir.clone())
+        .language("en")
+        .topic_filter(TopicFilter::History);
+
+    generate(config, NoCategorizer)?;
+
+    let base_file = output_dir.join("tools/get_article/battle_article.json");
+    let variant1_file = output_dir.join("tools/get_article/battle_article_1.json");
+    let variant2_file = output_dir.join("tools/get_article/battle_article_2.json");
+
+    assert!(base_file.exists());
+    assert!(variant1_file.exists());
+    assert!(variant2_file.exists());
+
+    let base_content = fs::read_to_string(&base_file)?;
+    assert!(base_content.contains("Multiple articles found"));
+    assert!(base_content.contains("Battle Article"));
+    assert!(base_content.contains("Battle/Article"));
+
+    let variant1_content = fs::read_to_string(&variant1_file)?;
+    let variant2_content = fs::read_to_string(&variant2_file)?;
+
+    assert!(!variant1_content.contains("---"));
+    assert!(!variant2_content.contains("---"));
+    assert_ne!(variant1_content, variant2_content);
+    let all_content = format!("{variant1_content}{variant2_content}");
+    assert!(all_content.contains("ancient battles"));
+    assert!(all_content.contains("medieval conflicts"));
+
+    Ok(())
+}
+
+#[test]
+fn test_collision_handling_existing_disambiguation() -> Result<(), Box<dyn std::error::Error>> {
+    let temp_dir = TempDir::new()?;
+    let input_file = temp_dir.path().join("test.xml");
+    let output_dir = temp_dir.path().join("output");
+
+    let long_content1 = format!(
+        "This is a historical empire article about ancient kingdoms. {}",
+        "a".repeat(1400)
+    );
+    let long_content2 = format!(
+        "This is another empire article about medieval dynasties. {}",
+        "b".repeat(1400)
+    );
+    let long_content3 = format!(
+        "This is a third empire article about colonial rule. {}",
+        "c".repeat(1400)
+    );
+
+    let test_xml = format!(
+        r#"<mediawiki>
+  <page>
+    <title>Empire Article</title>
+    <id>1</id>
+    <revision>
+      <text>{long_content1}</text>
+    </revision>
+  </page>
+  <page>
+    <title>Empire/Article</title>
+    <id>2</id>
+    <revision>
+      <text>{long_content2}</text>
+    </revision>
+  </page>
+  <page>
+    <title>Empire_Article</title>
+    <id>3</id>
+    <revision>
+      <text>{long_content3}</text>
+    </revision>
+  </page>
+</mediawiki>"#
+    );
+
+    fs::write(&input_file, test_xml)?;
+
+    let config = Config::new(input_file, output_dir.clone())
+        .language("en")
+        .topic_filter(TopicFilter::History);
+
+    generate(config, NoCategorizer)?;
+
+    let base_file = output_dir.join("tools/get_article/empire_article.json");
+    let variant1_file = output_dir.join("tools/get_article/empire_article_1.json");
+    let variant2_file = output_dir.join("tools/get_article/empire_article_2.json");
+    let variant3_file = output_dir.join("tools/get_article/empire_article_3.json");
+
+    assert!(base_file.exists());
+    assert!(variant1_file.exists());
+    assert!(variant2_file.exists());
+    assert!(variant3_file.exists());
+
+    let base_content = fs::read_to_string(&base_file)?;
+    assert!(base_content.contains("Multiple articles found"));
+    assert!(base_content.contains("Empire Article"));
+    assert!(base_content.contains("Empire/Article"));
+    assert!(base_content.contains("Empire_Article"));
+
+    let variant1_content = fs::read_to_string(&variant1_file)?;
+    let variant2_content = fs::read_to_string(&variant2_file)?;
+    let variant3_content = fs::read_to_string(&variant3_file)?;
+
+    assert!(!variant1_content.contains("---"));
+    assert!(!variant2_content.contains("---"));
+    assert!(!variant3_content.contains("---"));
+    assert_ne!(variant1_content, variant2_content);
+    assert_ne!(variant2_content, variant3_content);
+    assert_ne!(variant1_content, variant3_content);
+
+    let all_content = format!("{variant1_content}{variant2_content}{variant3_content}");
+    assert!(all_content.contains("ancient kingdoms"));
+    assert!(all_content.contains("medieval dynasties"));
+    assert!(all_content.contains("colonial rule"));
+
+    Ok(())
+}
+
+#[test]
+fn test_collision_handling_mixed_lengths() -> Result<(), Box<dyn std::error::Error>> {
+    let temp_dir = TempDir::new()?;
+    let input_file = temp_dir.path().join("test.xml");
+    let output_dir = temp_dir.path().join("output");
+
+    let short_content = "Short historical revolution article.";
+    let long_content = format!(
+        "This is a long revolution article about democratic movements. {}",
+        "a".repeat(1400)
+    );
+
+    let test_xml = format!(
+        r#"<mediawiki>
+  <page>
+    <title>Revolution Article</title>
+    <id>1</id>
+    <revision>
+      <text>{short_content}</text>
+    </revision>
+  </page>
+  <page>
+    <title>Revolution/Article</title>
+    <id>2</id>
+    <revision>
+      <text>{long_content}</text>
+    </revision>
+  </page>
+</mediawiki>"#
+    );
+
+    fs::write(&input_file, test_xml)?;
+
+    let config = Config::new(input_file, output_dir.clone())
+        .language("en")
+        .topic_filter(TopicFilter::History);
+
+    generate(config, NoCategorizer)?;
+
+    let base_file = output_dir.join("tools/get_article/revolution_article.json");
+    let variant1_file = output_dir.join("tools/get_article/revolution_article_1.json");
+    let variant2_file = output_dir.join("tools/get_article/revolution_article_2.json");
+
+    assert!(base_file.exists());
+    assert!(variant1_file.exists());
+    assert!(variant2_file.exists());
+
+    let base_content = fs::read_to_string(&base_file)?;
+    assert!(base_content.contains("Multiple articles found"));
+    assert!(base_content.contains("Revolution Article"));
+    assert!(base_content.contains("Revolution/Article"));
+
+    let variant1_content = fs::read_to_string(&variant1_file)?;
+    let variant2_content = fs::read_to_string(&variant2_file)?;
+
+    assert!(!variant1_content.contains("---"));
+    assert!(!variant2_content.contains("---"));
+    assert_ne!(variant1_content, variant2_content);
+
+    Ok(())
+}
+
+#[test]
+fn test_filename_encoding_collision() -> Result<(), Box<dyn std::error::Error>> {
+    use wikipedia_core::filename_encoding::encode_staticmcp_filename;
+
+    let title1 = "Test/Article";
+    let title2 = "Test Article";
+    let title3 = "Test_Article";
+
+    let encoded1 = encode_staticmcp_filename(title1);
+    let encoded2 = encode_staticmcp_filename(title2);
+    let encoded3 = encode_staticmcp_filename(title3);
+
+    assert_eq!(encoded1, "test_article");
+    assert_eq!(encoded2, "test_article");
+    assert_eq!(encoded3, "test_article");
+
+    Ok(())
+}
