@@ -272,27 +272,14 @@ impl<C: ArticleCategorizer> StaticMcpGenerator<C> {
                 .or_default()
                 .push(title.to_string());
         }
-        let filename = crate::filename_encoding::encode_staticmcp_filename(title);
-        let file_path = self
+
+        let base_filename = crate::filename_encoding::encode_staticmcp_filename(title);
+        let base_file_path = self
             .output_dir
-            .join(format!("tools/get_article/{filename}.json"));
+            .join(format!("tools/get_article/{base_filename}.json"));
 
-        if file_path.exists() {
-            let existing_content = std::fs::read_to_string(&file_path)?;
-            let existing_response: ToolResponse = serde_json::from_str(&existing_content)?;
-            let existing_text = &existing_response.content[0].text;
-
-            let merged_content = self.merge_with_existing_content(existing_text, title, article)?;
-
-            let response = ToolResponse {
-                content: vec![ToolContent {
-                    content_type: "text".to_string(),
-                    text: merged_content,
-                }],
-            };
-
-            let response_json = serde_json::to_string_pretty(&response)?;
-            std::fs::write(&file_path, response_json)?;
+        if base_file_path.exists() {
+            self.handle_collision(title, article, &base_filename)?;
         } else {
             let content = format!("# {}\n\n{}", title, article.content);
             let response = ToolResponse {
@@ -303,9 +290,130 @@ impl<C: ArticleCategorizer> StaticMcpGenerator<C> {
             };
 
             let response_json = serde_json::to_string_pretty(&response)?;
-            std::fs::write(&file_path, response_json)?;
+            std::fs::write(&base_file_path, response_json)?;
         }
 
+        Ok(())
+    }
+
+    fn handle_collision(
+        &mut self,
+        new_title: &str,
+        new_article: &Article,
+        base_filename: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let base_file_path = self
+            .output_dir
+            .join(format!("tools/get_article/{base_filename}.json"));
+
+        let existing_content = std::fs::read_to_string(&base_file_path)?;
+        let existing_response: ToolResponse = serde_json::from_str(&existing_content)?;
+        let existing_text = &existing_response.content[0].text;
+
+        if existing_text.starts_with("Multiple articles found") {
+            let mut variant_number = 1;
+            while self
+                .output_dir
+                .join(format!(
+                    "tools/get_article/{base_filename}_{variant_number}.json"
+                ))
+                .exists()
+            {
+                variant_number += 1;
+            }
+
+            let variant_filename = format!("{base_filename}_{variant_number}");
+            let variant_title = format!("{new_title} ({variant_number})");
+            self.write_single_article(&variant_filename, &variant_title, new_article)?;
+
+            let updated_disambiguation = format!(
+                "{existing_text}• **{variant_title}** - Use get_article tool with title '{variant_title}'\n"
+            );
+
+            let response = ToolResponse {
+                content: vec![ToolContent {
+                    content_type: "text".to_string(),
+                    text: updated_disambiguation,
+                }],
+            };
+
+            let response_json = serde_json::to_string_pretty(&response)?;
+            std::fs::write(&base_file_path, response_json)?;
+        } else if existing_text.len() <= 1000 && new_article.content.len() <= 1000 {
+            let merged_content = format!(
+                "{}\n\n---\n\n## {}\n\n{}",
+                existing_text, new_title, new_article.content
+            );
+
+            let response = ToolResponse {
+                content: vec![ToolContent {
+                    content_type: "text".to_string(),
+                    text: merged_content,
+                }],
+            };
+
+            let response_json = serde_json::to_string_pretty(&response)?;
+            std::fs::write(&base_file_path, response_json)?;
+        } else {
+            let existing_title = self.extract_title_from_content(existing_text);
+
+            let existing_variant_title = format!("{existing_title} (1)");
+            let existing_filename = format!("{base_filename}_1");
+            self.write_single_article(
+                &existing_filename,
+                &existing_variant_title,
+                &Article {
+                    id: 0,
+                    title: existing_title.clone(),
+                    content: existing_text
+                        .strip_prefix(&format!("# {existing_title}\n\n"))
+                        .unwrap_or(existing_text)
+                        .to_string(),
+                    redirect: None,
+                },
+            )?;
+
+            let new_variant_title = format!("{new_title} (2)");
+            let new_filename = format!("{base_filename}_2");
+            self.write_single_article(&new_filename, &new_variant_title, new_article)?;
+
+            let disambiguation = format!(
+                "Multiple articles found. Choose the one you need:\n\n• **{existing_variant_title}** - Use get_article tool with title '{existing_variant_title}'\n• **{new_variant_title}** - Use get_article tool with title '{new_variant_title}'\n"
+            );
+
+            let response = ToolResponse {
+                content: vec![ToolContent {
+                    content_type: "text".to_string(),
+                    text: disambiguation,
+                }],
+            };
+
+            let response_json = serde_json::to_string_pretty(&response)?;
+            std::fs::write(&base_file_path, response_json)?;
+        }
+
+        Ok(())
+    }
+
+    fn write_single_article(
+        &self,
+        filename: &str,
+        title: &str,
+        article: &Article,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let content = format!("# {}\n\n{}", title, article.content);
+        let response = ToolResponse {
+            content: vec![ToolContent {
+                content_type: "text".to_string(),
+                text: content,
+            }],
+        };
+
+        let response_json = serde_json::to_string_pretty(&response)?;
+        let file_path = self
+            .output_dir
+            .join(format!("tools/get_article/{filename}.json"));
+        std::fs::write(&file_path, response_json)?;
         Ok(())
     }
 
@@ -542,33 +650,6 @@ impl<C: ArticleCategorizer> StaticMcpGenerator<C> {
         }
 
         Ok(())
-    }
-
-    fn merge_with_existing_content(
-        &self,
-        existing_text: &str,
-        new_title: &str,
-        new_article: &Article,
-    ) -> Result<String, Box<dyn std::error::Error>> {
-        // Check if existing content is already a disambiguation page
-        if existing_text.starts_with("Multiple articles found") {
-            // Add to existing disambiguation
-            let new_entry =
-                format!("• **{new_title}** - Use get_article tool with title '{new_title}'\n");
-            Ok(format!("{existing_text}{new_entry}"))
-        } else if existing_text.len() <= 1000 && new_article.content.len() <= 1000 {
-            // Both articles are short, create merged content
-            Ok(format!(
-                "{}\n\n---\n\n## {}\n\n{}",
-                existing_text, new_title, new_article.content
-            ))
-        } else {
-            // Convert to reference disambiguation
-            let existing_title = self.extract_title_from_content(existing_text);
-            Ok(format!(
-                "Multiple articles found. Choose the one you need:\n\n• **{existing_title}** - Use get_article tool with title '{existing_title}'\n• **{new_title}** - Use get_article tool with title '{new_title}'\n"
-            ))
-        }
     }
 
     fn extract_title_from_content(&self, content: &str) -> String {
