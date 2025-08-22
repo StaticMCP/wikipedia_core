@@ -278,10 +278,35 @@ impl<C: ArticleCategorizer> StaticMcpGenerator<C> {
             .output_dir
             .join(format!("tools/get_article/{base_filename}.json"));
 
+        if let Some(redirect_target) = &article.redirect {
+            let redirect_filename =
+                crate::filename_encoding::encode_staticmcp_filename(redirect_target);
+            if redirect_filename == base_filename {
+                return Ok(());
+            }
+        }
+
+        if let Some(redirect_target) = self.extract_redirect_target_from_content(&article.content) {
+            let redirect_filename =
+                crate::filename_encoding::encode_staticmcp_filename(&redirect_target);
+            if redirect_filename == base_filename {
+                return Ok(());
+            }
+        }
+
         if base_file_path.exists() {
             self.handle_collision(title, article, &base_filename)?;
         } else {
-            let content = format!("# {}\n\n{}", title, article.content);
+            let content = if let Some(redirect_target) =
+                self.extract_redirect_target_from_content(&article.content)
+            {
+                format!(
+                    "# {title}\n\nThis article redirects to another article. Use the get_article tool with title '{redirect_target}' to access the target content."
+                )
+            } else {
+                format!("# {}\n\n{}", title, article.content)
+            };
+
             let response = ToolResponse {
                 content: vec![ToolContent {
                     content_type: "text".to_string(),
@@ -310,20 +335,85 @@ impl<C: ArticleCategorizer> StaticMcpGenerator<C> {
         let existing_response: ToolResponse = serde_json::from_str(&existing_content)?;
         let existing_text = &existing_response.content[0].text;
 
+        if !existing_text.starts_with("Multiple articles found") {
+            let existing_title = self.extract_title_from_content(existing_text);
+
+            let existing_article = Article {
+                id: 0,
+                title: existing_title.clone(),
+                content: existing_text
+                    .strip_prefix(&format!("# {existing_title}\n\n"))
+                    .unwrap_or(existing_text)
+                    .to_string(),
+                redirect: self.extract_redirect_from_content(existing_text),
+            };
+
+            if let Some(redirect_target) = &existing_article.redirect {
+                let redirect_filename =
+                    crate::filename_encoding::encode_staticmcp_filename(redirect_target);
+                if redirect_filename == base_filename {
+                    let content = if let Some(new_redirect_target) =
+                        self.extract_redirect_target_from_content(&new_article.content)
+                    {
+                        format!(
+                            "# {new_title}\n\nThis article redirects to another article. Use the get_article tool with title '{new_redirect_target}' to access the target content."
+                        )
+                    } else {
+                        format!("# {}\n\n{}", new_title, new_article.content)
+                    };
+                    let response = ToolResponse {
+                        content: vec![ToolContent {
+                            content_type: "text".to_string(),
+                            text: content,
+                        }],
+                    };
+                    let response_json = serde_json::to_string_pretty(&response)?;
+                    std::fs::write(&base_file_path, response_json)?;
+                    return Ok(());
+                }
+            }
+
+            if let Some(redirect_target) = self.extract_redirect_target_from_content(existing_text)
+            {
+                let redirect_filename =
+                    crate::filename_encoding::encode_staticmcp_filename(&redirect_target);
+                if redirect_filename == base_filename {
+                    let content = if let Some(new_redirect_target) =
+                        self.extract_redirect_target_from_content(&new_article.content)
+                    {
+                        format!(
+                            "# {new_title}\n\nThis article redirects to another article. Use the get_article tool with title '{new_redirect_target}' to access the target content."
+                        )
+                    } else {
+                        format!("# {}\n\n{}", new_title, new_article.content)
+                    };
+                    let response = ToolResponse {
+                        content: vec![ToolContent {
+                            content_type: "text".to_string(),
+                            text: content,
+                        }],
+                    };
+                    let response_json = serde_json::to_string_pretty(&response)?;
+                    std::fs::write(&base_file_path, response_json)?;
+                    return Ok(());
+                }
+            }
+        }
+
         if existing_text.starts_with("Multiple articles found") {
             let mut variant_number = 1;
             while self
                 .output_dir
                 .join(format!(
-                    "tools/get_article/{base_filename}_{variant_number}.json"
+                    "tools/get_article/{base_filename}__disambig_{variant_number}.json"
                 ))
                 .exists()
             {
                 variant_number += 1;
             }
 
-            let variant_filename = format!("{base_filename}_{variant_number}");
-            let variant_title = format!("{new_title} ({variant_number})");
+            let variant_filename = format!("{base_filename}__disambig_{variant_number}");
+            let variant_title = format!("{new_title}__disambig_{variant_number}");
             self.write_single_article(&variant_filename, &variant_title, new_article)?;
 
             let updated_disambiguation = format!(
@@ -357,8 +447,8 @@ impl<C: ArticleCategorizer> StaticMcpGenerator<C> {
         } else {
             let existing_title = self.extract_title_from_content(existing_text);
 
-            let existing_variant_title = format!("{existing_title} (1)");
-            let existing_filename = format!("{base_filename}_1");
+            let existing_variant_title = format!("{existing_title}__disambig_1");
+            let existing_filename = format!("{base_filename}__disambig_1");
             self.write_single_article(
                 &existing_filename,
                 &existing_variant_title,
@@ -373,8 +463,8 @@ impl<C: ArticleCategorizer> StaticMcpGenerator<C> {
                 },
             )?;
 
-            let new_variant_title = format!("{new_title} (2)");
-            let new_filename = format!("{base_filename}_2");
+            let new_variant_title = format!("{new_title}__disambig_2");
+            let new_filename = format!("{base_filename}__disambig_2");
             self.write_single_article(&new_filename, &new_variant_title, new_article)?;
 
             let disambiguation = format!(
@@ -664,6 +754,26 @@ impl<C: ArticleCategorizer> StaticMcpGenerator<C> {
         } else {
             "Unknown".to_string()
         }
+    }
+
+    fn extract_redirect_from_content(&self, _content: &str) -> Option<String> {
+        None
+    }
+
+    fn extract_redirect_target_from_content(&self, content: &str) -> Option<String> {
+        let content = content.trim();
+        if (content.starts_with("#REDIRECT") || content.starts_with("#redirect"))
+            && let Some(start) = content.find("[[")
+            && let Some(end) = content[start..].find("]]")
+        {
+            let target = &content[start + 2..start + end];
+            if let Some(pipe_pos) = target.find('|') {
+                return Some(target[..pipe_pos].trim().to_string());
+            } else {
+                return Some(target.trim().to_string());
+            }
+        }
+        None
     }
 
     fn generate_list_tools(&self) -> Result<(), Box<dyn std::error::Error>> {
