@@ -326,8 +326,8 @@ fn test_collision_handling_long_articles() -> Result<(), Box<dyn std::error::Err
     generate(config, NoCategorizer)?;
 
     let base_file = output_dir.join("tools/get_article/battle_article.json");
-    let variant1_file = output_dir.join("tools/get_article/battle_article_1.json");
-    let variant2_file = output_dir.join("tools/get_article/battle_article_2.json");
+    let variant1_file = output_dir.join("tools/get_article/battle_article__disambig_1.json");
+    let variant2_file = output_dir.join("tools/get_article/battle_article__disambig_2.json");
 
     assert!(base_file.exists());
     assert!(variant1_file.exists());
@@ -405,9 +405,9 @@ fn test_collision_handling_existing_disambiguation() -> Result<(), Box<dyn std::
     generate(config, NoCategorizer)?;
 
     let base_file = output_dir.join("tools/get_article/empire_article.json");
-    let variant1_file = output_dir.join("tools/get_article/empire_article_1.json");
-    let variant2_file = output_dir.join("tools/get_article/empire_article_2.json");
-    let variant3_file = output_dir.join("tools/get_article/empire_article_3.json");
+    let variant1_file = output_dir.join("tools/get_article/empire_article__disambig_1.json");
+    let variant2_file = output_dir.join("tools/get_article/empire_article__disambig_2.json");
+    let variant3_file = output_dir.join("tools/get_article/empire_article__disambig_3.json");
 
     assert!(base_file.exists());
     assert!(variant1_file.exists());
@@ -479,8 +479,8 @@ fn test_collision_handling_mixed_lengths() -> Result<(), Box<dyn std::error::Err
     generate(config, NoCategorizer)?;
 
     let base_file = output_dir.join("tools/get_article/revolution_article.json");
-    let variant1_file = output_dir.join("tools/get_article/revolution_article_1.json");
-    let variant2_file = output_dir.join("tools/get_article/revolution_article_2.json");
+    let variant1_file = output_dir.join("tools/get_article/revolution_article__disambig_1.json");
+    let variant2_file = output_dir.join("tools/get_article/revolution_article__disambig_2.json");
 
     assert!(base_file.exists());
     assert!(variant1_file.exists());
